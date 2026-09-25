@@ -1,0 +1,13 @@
+{
+  "name": "nitbot",
+  "owner": {
+    "name": "Felipe Ribeiro"
+  },
+  "plugins": [
+    {
+      "name": "nitbot",
+      "source": "./",
+      "description": "Adversarial code review with blind sub-agents, a skeptic, and zero-token guardrail hooks."
+    }
+  ]
+}

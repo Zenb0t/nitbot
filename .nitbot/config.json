@@ -1,0 +1,9 @@
+{
+  "detector": {
+    "ignoreFiles": [
+      "skills/nitbot/scripts/lib/rules.mjs",
+      "tests/rules.test.mjs",
+      "tests/fixtures/**"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "nitbot",
+  "description": "Adversarial code review: the project's own tools first, then a blind reviewer sub-agent and a skeptic that tries to refute every finding. Plus zero-token guardrail hooks.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Felipe Ribeiro"
+  },
+  "license": "Apache-2.0",
+  "repository": "https://github.com/Zenb0t/nitbot",
+  "skills": "./skills/"
+}

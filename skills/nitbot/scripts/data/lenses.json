@@ -1,0 +1,128 @@
+[
+  {
+    "id": "deleted-line",
+    "name": "The deleted line",
+    "prompt": "Read only the removed lines first. For each one, name what it guaranteed (a check, an ordering, a default, a cleanup) and find where the new code guarantees it now.",
+    "boost": ["app", "contract", "data", "infra"]
+  },
+  {
+    "id": "second-call",
+    "name": "The second call",
+    "prompt": "Every new operation runs twice: a retry, a double-click, a redelivered message, a re-run job. What is created, charged, sent, or appended twice?",
+    "boost": ["app", "data", "contract"]
+  },
+  {
+    "id": "concurrent-twin",
+    "name": "The concurrent twin",
+    "prompt": "Two copies of this code run at the same moment on the same data: two requests, two workers, two tabs. Find the read-then-write gaps.",
+    "boost": ["app", "data"]
+  },
+  {
+    "id": "half-done",
+    "name": "The half-done write",
+    "prompt": "The process dies between any two lines that change state. Which crash point leaves the system inconsistent, and what repairs it on restart?",
+    "boost": ["data", "app", "infra"]
+  },
+  {
+    "id": "hostile-input",
+    "name": "The hostile input",
+    "prompt": "Trace every value that crosses a trust boundary (request, file, env, third-party response, message queue) to where it is used. Who controls it, and what is the worst string they can send?",
+    "boost": ["security", "contract", "app"]
+  },
+  {
+    "id": "wrong-tenant",
+    "name": "The wrong tenant",
+    "prompt": "An authenticated user asks for someone else's object by guessing an id. Walk each new read and write path and find where ownership is checked, not just identity.",
+    "boost": ["security", "contract", "data"]
+  },
+  {
+    "id": "boundary-values",
+    "name": "The edges",
+    "prompt": "Feed every new function the empty case, exactly one, the maximum, negative, null, NaN, a 10 MB string, and non-ASCII text. Which one breaks it?",
+    "boost": ["app", "contract"]
+  },
+  {
+    "id": "clock",
+    "name": "The clock",
+    "prompt": "Time zones, DST transitions, leap days, clock skew between machines, timestamps in seconds vs milliseconds, and 'now' read twice. Where does this change assume time is simple?",
+    "boost": ["app", "data"]
+  },
+  {
+    "id": "numbers",
+    "name": "The arithmetic",
+    "prompt": "Check every calculation: off-by-one ranges, integer division, float money, overflow, rounding direction, unit mismatches (bytes vs KB, cents vs dollars, ms vs s).",
+    "boost": ["app", "data"]
+  },
+  {
+    "id": "error-path",
+    "name": "The unhappy path",
+    "prompt": "Ignore the happy path entirely. Walk each call that can fail: what does the caller see, what state is left behind, and is the error message something a human can act on?",
+    "boost": ["app", "infra", "contract"]
+  },
+  {
+    "id": "pager",
+    "name": "The 3 a.m. page",
+    "prompt": "This change fails in production at 3 a.m. Is the failure visible in logs or metrics, is it attributable to this change, and can it be rolled back without a data fix?",
+    "boost": ["infra", "data", "app"]
+  },
+  {
+    "id": "deploy-order",
+    "name": "The mixed fleet",
+    "prompt": "During the deploy, old code runs against new data and new code against old data, and old clients talk to new servers. What breaks in that window?",
+    "boost": ["data", "contract", "infra", "deps"]
+  },
+  {
+    "id": "scale",
+    "name": "The thousand-fold day",
+    "prompt": "Multiply the data and the traffic by 1000. Find the query in a loop, the unbounded list, the full-table scan, the payload loaded into memory, the missing pagination.",
+    "boost": ["data", "app"]
+  },
+  {
+    "id": "resources",
+    "name": "The ledger",
+    "prompt": "List everything this change acquires: connections, file handles, locks, timers, listeners, subscriptions, temp files, goroutines. Find the path where one is never released.",
+    "boost": ["app", "infra"]
+  },
+  {
+    "id": "cache",
+    "name": "The stale copy",
+    "prompt": "Wherever a value is cached, memoized, or copied, find the write that should invalidate it and does not, and the key that can collide.",
+    "boost": ["app", "data"]
+  },
+  {
+    "id": "lying-test",
+    "name": "The test that lies",
+    "prompt": "For each new or changed test, describe the smallest bug in the code under test that the test would still pass with. A test that cannot fail is not a test.",
+    "boost": ["tests", "app"]
+  },
+  {
+    "id": "misread-name",
+    "name": "The caller who trusts the name",
+    "prompt": "A teammate calls each new or changed function knowing only its name and signature. Where does the behavior surprise them: side effects, mutation of arguments, a nullable return, a thrown error?",
+    "boost": ["contract", "app"]
+  },
+  {
+    "id": "config-drift",
+    "name": "The other environment",
+    "prompt": "The same code runs in dev, CI, staging and production with different env vars, flags, and permissions. Which default, missing variable, or feature flag state makes it behave differently there?",
+    "boost": ["infra", "deps", "app"]
+  },
+  {
+    "id": "leak",
+    "name": "The leak",
+    "prompt": "Follow data outward: logs, error messages, analytics, API responses, URLs, client bundles. Where does a secret, token, or personal detail escape to somewhere it should not be?",
+    "boost": ["security", "app", "infra"]
+  },
+  {
+    "id": "supply-chain",
+    "name": "The new neighbor",
+    "prompt": "For every added or bumped dependency, action, or base image: is it maintained, is it pinned, what does it run at install time, and is it doing something the standard library already does?",
+    "boost": ["deps", "infra"]
+  },
+  {
+    "id": "spec-gap",
+    "name": "The promise",
+    "prompt": "Reread the stated intent (PR description or commit messages). List each promise it makes, then find the code that keeps it. Also list code that does something the intent never mentioned.",
+    "boost": ["app", "contract"]
+  }
+]
