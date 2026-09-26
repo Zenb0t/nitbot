@@ -72,3 +72,49 @@ test('explicit targets: staged, commit, range, path', (t) => {
   assert.match(unchanged.label, /full contents/);
   assert.throws(() => resolveTarget(r.dir, 'no-such-thing'), /Unrecognized target/);
 });
+
+test("nitbot's own .nitbot/ folder never makes a clean tree look dirty", (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('a.js', '1\n');
+  r.commit('one');
+  r.write('a.js', '2\n');
+  r.commit('two');
+  r.write('.nitbot/.gitignore', 'state/\n');
+  r.write('.nitbot/config.json', '{}\n');
+  const target = resolveTarget(r.dir);
+  assert.equal(target.kind, 'commit', 'still the last commit, not "uncommitted changes"');
+  assert.deepEqual(paths(target), ['a.js']);
+
+  r.git('checkout', '-q', '-b', 'feat');
+  r.write('b.js', 'b\n');
+  r.git('add', 'b.js');
+  r.git('commit', '-q', '-m', 'feat');
+  assert.deepEqual(paths(resolveTarget(r.dir)), ['b.js'], 'untracked .nitbot files stay out of a branch review');
+});
+
+test('paths with spaces come out of git without the trailing tab', (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('my file.js', '1\n');
+  r.commit('one');
+  r.write('my file.js', '2\n');
+  assert.deepEqual(paths(resolveTarget(r.dir)), ['my file.js']);
+});
+
+test('a path target includes untracked files under it', (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('src/feature/old.js', 'a\n');
+  r.write('src/other.js', 'o\n');
+  r.commit('init');
+
+  r.write('src/feature/new.js', 'n\n');
+  const onlyNew = resolveTarget(r.dir, 'src/feature');
+  assert.match(onlyNew.label, /uncommitted changes/);
+  assert.deepEqual(paths(onlyNew), ['src/feature/new.js'], 'the new file, not the unchanged one as "added"');
+
+  r.write('src/feature/old.js', 'b\n');
+  r.write('src/other-new.js', 'x\n');
+  assert.deepEqual(paths(resolveTarget(r.dir, 'src/feature')), ['src/feature/new.js', 'src/feature/old.js']);
+});

@@ -35,9 +35,18 @@ export function nitbotDir(root) {
 }
 
 export function loadConfig(root) {
-  const shared = readJson(path.join(nitbotDir(root), 'config.json'));
-  const local = readJson(path.join(nitbotDir(root), 'config.local.json'));
+  const invalid = [];
+  const load = (name) => {
+    const { value, error } = readConfigFile(path.join(nitbotDir(root), name));
+    if (error) invalid.push(`.nitbot/${name}: ${error}`);
+    return value;
+  };
+  const shared = load('config.json');
+  const local = load('config.local.json');
   const merged = merge(merge(structuredClone(DEFAULTS), shared), local);
+  // A broken file is skipped rather than fatal (hooks must fail open), but
+  // callers report it: a skipped team config silently drops its ignores.
+  merged.invalid = invalid;
   // Ignore lists concatenate instead of replacing, so a private ignore never
   // silently drops the team's.
   for (const key of ['ignoreRules', 'ignoreFiles']) {
@@ -48,8 +57,11 @@ export function loadConfig(root) {
 }
 
 export function updateConfig(root, mutate, { local = false } = {}) {
-  const file = path.join(nitbotDir(root), local ? 'config.local.json' : 'config.json');
-  const current = readJson(file);
+  const name = local ? 'config.local.json' : 'config.json';
+  const file = path.join(nitbotDir(root), name);
+  const { value: current, error } = readConfigFile(file);
+  // Rewriting an unreadable file from {} would erase every setting in it.
+  if (error) throw new Error(`CONFIG_INVALID: .nitbot/${name} is not valid JSON (${error}). Fix it by hand; nitbot will not overwrite it.`);
   mutate(current);
   ensureNitbotDir(root);
   fs.writeFileSync(file, JSON.stringify(current, null, 2) + '\n');
@@ -66,6 +78,23 @@ export function ensureNitbotDir(root) {
   const gi = path.join(dir, '.gitignore');
   if (!fs.existsSync(gi)) fs.writeFileSync(gi, 'state/\nreviews/\nconfig.local.json\n');
   return created;
+}
+
+// A missing file is an empty config; an unreadable one is an error, never {}.
+function readConfigFile(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    return err.code === 'ENOENT' ? { value: {} } : { value: {}, error: err.message };
+  }
+  try {
+    const value = JSON.parse(text);
+    if (value && typeof value === 'object' && !Array.isArray(value)) return { value };
+    return { value: {}, error: 'top level must be an object' };
+  } catch (err) {
+    return { value: {}, error: err.message };
+  }
 }
 
 export function readJson(file, fallback = {}) {

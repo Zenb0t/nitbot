@@ -5,6 +5,8 @@ import { matchesAny } from './config.mjs';
 
 const TEST_PATH = /(^|\/)(__tests__|tests?|spec|specs|e2e|fixtures?)\/|[._-](test|spec)\.[a-z]+$|(^|\/)test_[^/]+\.py$|_test\.(go|py)$/;
 const SKIP_PATH = /(^|\/)(node_modules|vendor|dist|build|\.next|coverage|target)\/|\.min\.(js|css)$|\.(lock|lockb|snap|svg|map)$|-lock\.(json|yaml)$/;
+const DOCS_EXT = new Set(['md', 'mdx', 'markdown', 'txt', 'rst', 'adoc', 'asciidoc', 'org']);
+const COMMENT_LINE = /^\s*(\/\/|\/\*|\*|#|<!--|--\s|;)/;
 const SUPPRESS = /nitbot-ignore(?:-line)?(?::\s*([\w,\s-]+))?/;
 const SUPPRESS_NEXT = /nitbot-ignore-next-line(?::\s*([\w,\s-]+))?/;
 
@@ -33,6 +35,8 @@ export function detect(files, { config, exists = () => false, tiers = ['immediat
         if (rule.langs && !rule.langs.includes(file.ext)) continue;
         if (rule.skipTests && file.isTest) continue;
         if (rule.onlyTests && !file.isTest) continue;
+        if (rule.skipDocs && DOCS_EXT.has(file.ext)) continue;
+        if (rule.skipComments && COMMENT_LINE.test(line.text)) continue;
         if (suppressed(rule.id, line.text, file.lines[index - 1]?.text)) continue;
         // Code-shape rules must not fire on code quoted inside a string
         // (test fixtures, generators, docs in code); secret rules must.

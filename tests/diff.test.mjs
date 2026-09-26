@@ -54,3 +54,12 @@ test('fileAsAdded treats every line as new', () => {
   assert.deepEqual(f.lines.map((l) => l.n), [1, 2]);
   assert.equal(f.hunks[0].length, 2);
 });
+
+test('a path with a space loses the TAB git appends to its ---/+++ headers', () => {
+  const text = 'diff --git a/prod key.pem b/prod key.pem\nnew file mode 100644\n--- /dev/null\n+++ b/prod key.pem\t\n@@ -0,0 +1 @@\n+x\n' +
+    'diff --git a/my file.js b/my file.js\n--- a/my file.js\t\n+++ b/my file.js\t\n@@ -1 +1 @@\n-1\n+2\n';
+  const [pem, js] = parseDiff(text);
+  assert.equal(pem.path, 'prod key.pem');
+  assert.equal(js.path, 'my file.js');
+  assert.equal(js.oldPath, 'my file.js');
+});

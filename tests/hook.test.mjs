@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { tempRepo } from './helpers.mjs';
-import { runHook } from '../skills/nitbot/scripts/lib/hook.mjs';
+import { runHook, shellWords, commitArgs } from '../skills/nitbot/scripts/lib/hook.mjs';
 
 const AWS = 'AKIA' + 'Z'.repeat(16);
 
@@ -73,4 +73,46 @@ test('hooks can be switched off', (t) => {
   r.write('.nitbot/config.json', JSON.stringify({ hook: { enabled: false } }));
   r.write('src/a.js', '<<<<<<< HEAD\n');
   assert.equal(runHook('post-edit', { cwd: r.dir, tool_input: { file_path: path.join(r.dir, 'src/a.js') } }), null);
+});
+
+test('commit gate: flag-like words inside a commit message are not flags', (t) => {
+  const r = repo(t);
+  r.write('src/wip.js', 'export const w = 1;\n');
+  r.commit('wip file');
+  r.write('src/wip.js', 'export const w = 1;\n  debugger;\n'); // unstaged, not part of the commit
+  r.write('src/a.js', 'export const a = 2;\n');
+  r.git('add', 'src/a.js');
+  const bash = (command) => runHook('pre-bash', { cwd: r.dir, tool_input: { command } });
+
+  assert.equal(bash('git commit -m "support --all"'), null);
+  assert.equal(bash("git commit -m 'Add -all flag'"), null);
+  assert.equal(bash('git commit --message="-a is now the default" && git push'), null);
+  const heredoc = 'git commit -m "$(cat <<\'EOF\'\nsupport --all, "quoted" and (parens\n\n-a too\nEOF\n)"';
+  assert.equal(bash(heredoc), null, 'a heredoc message is one word, quotes and parens included');
+  assert.equal(bash('git commit -am "wip"').hookSpecificOutput.permissionDecision, 'deny', '-a still checks unstaged work');
+  assert.equal(bash('git commit --all -m wip').hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('commit gate: `git commit <paths>` is checked against those files on disk', (t) => {
+  const r = repo(t);
+  r.write('src/b.js', 'export const b = 1;\n');
+  r.commit('b');
+  r.write('src/b.js', 'export const b = 1;\n  debugger;\n'); // unstaged
+  r.write('src/a.test.js', "it.only('x', () => {});\n");
+  r.git('add', 'src/a.test.js'); // staged, but not in a pathspec commit
+  r.write('src/a.js', 'export const a = 2;\n');
+  const bash = (command) => runHook('pre-bash', { cwd: r.dir, tool_input: { command } });
+
+  assert.match(bash('git commit src/b.js -m "tidy"').hookSpecificOutput.permissionDecisionReason, /debugger/);
+  assert.equal(bash('git commit -m "tidy" -- src/a.js'), null, 'the staged focused test is not in this commit');
+  const include = bash('git commit -i src/a.js -m x').hookSpecificOutput.permissionDecisionReason;
+  assert.match(include, /focused-test/, '--include keeps what is staged');
+});
+
+test('shellWords and commitArgs', () => {
+  assert.deepEqual(shellWords(String.raw`-m "a b" 'c d' e\ f; rm x`), ['-m', 'a b', 'c d', 'e f']);
+  assert.deepEqual(commitArgs(shellWords('-qm msg -- "my file.js" 2> /dev/null')), { all: false, include: false, paths: ['my file.js'] });
+  assert.deepEqual(commitArgs(['-F', '-', '<<EOF']), { all: false, include: false, paths: [] });
+  assert.deepEqual(commitArgs(['-uno', '-S', 'a.js']), { all: false, include: false, paths: ['a.js'] });
+  assert.equal(commitArgs(['-va']).all, true);
 });
