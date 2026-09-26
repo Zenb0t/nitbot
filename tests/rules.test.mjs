@@ -100,3 +100,15 @@ test('tls-disabled catches the bracket form of NODE_TLS_REJECT_UNAUTHORIZED, sti
   assert.deepEqual(rules(run('a.py', `os.environ["${name}"] = "0"\n`)), ['tls-disabled']);
   assert.deepEqual(run('a.js', `if (process.env['${name}'] === '0') warn();\n`), [], 'a bracket check is not a disable');
 });
+
+test('# and ; start code, not a comment, in languages that only have // comments', () => {
+  const name = 'NODE_TLS_REJECT_' + 'UNAUTHORIZED';
+  assert.deepEqual(rules(run('a.js', 'class A {\n  #agent = new https.Agent({ rejectUnauthorized: false });\n}\n')), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.ts', ';(() => https.get(url, { rejectUnauthorized: false }))();\n')), ['tls-disabled']);
+
+  assert.deepEqual(run('a.py', '# requests.get(url, verify=False)\n'), [], 'still a comment in Python');
+  assert.deepEqual(run('Dockerfile', `# ENV ${name}=0\n`), [], 'still a comment in a Dockerfile');
+  assert.deepEqual(run('.env.example', `# ${name}=0\n`), [], 'still a comment in an env file');
+  assert.deepEqual(run('a.ini', `; ${name}=0\n`), [], 'still a comment in an ini file');
+  assert.deepEqual(run('a.sql', '-- rejectUnauthorized: false\n'), [], 'still a comment in SQL');
+});
