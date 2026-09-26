@@ -131,3 +131,27 @@ test('commit gate: pathspec commits run with `git -C <dir>` or after `cd <dir> &
   assert.match(reason('cd sub && git commit b.js -m x'), /debugger/, 'after a cd, every tracked change is checked');
   assert.equal(bash('git -C sub commit a.js -m x'), null, 'a path the -C directory does not hold is still not checked');
 });
+
+test('commit gate: a `git -C` directory the hook cannot resolve still gets checked', (t) => {
+  const r = repo(t);
+  r.write('sub/b.js', 'export const b = 1;\n');
+  r.commit('b');
+  r.write('sub/b.js', 'export const b = 1;\n  debugger;\n'); // unstaged
+  r.write('src/a.test.js', "it.only('x', () => {});\n");
+  r.git('add', 'src/a.test.js'); // staged
+  const bash = (command) => runHook('pre-bash', { cwd: r.dir, tool_input: { command } });
+  const reason = (command) => bash(command)?.hookSpecificOutput.permissionDecisionReason ?? '';
+
+  assert.match(reason('git -C $PWD commit -m x'), /focused-test/, 'a shell variable: the staged changes are checked from the root');
+  assert.match(reason('git -C "$SOME_DIR" commit -m x'), /focused-test/);
+  assert.match(reason('git -C $PWD/sub commit b.js -m x'), /debugger/, 'pathspecs under an unknown directory: every tracked change is checked');
+
+  const home = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  t.after(() => {
+    for (const [k, v] of Object.entries(home)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  });
+  process.env.HOME = process.env.USERPROFILE = path.dirname(r.dir);
+  const tilde = `~/${path.basename(r.dir)}`;
+  assert.match(reason(`git -C ${tilde} commit -m x`), /focused-test/, 'a leading ~ is the home directory');
+  assert.match(reason(`git -C ${tilde}/sub commit b.js -m x`), /debugger/);
+});

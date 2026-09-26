@@ -2,6 +2,7 @@
 // when something fires. Every handler fails open: a bug in nitbot must never
 // block the user's work.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, nitbotDir, ensureNitbotDir, readJson } from './config.mjs';
 import { detect, formatFindings } from './detect.mjs';
@@ -64,15 +65,25 @@ function preBash(root, config, payload) {
   if (commit) {
     const { all, include, paths } = commitArgs(shellWords(cmd, commit.index + commit[0].length));
     const opts = shellWords(commit[1]);
-    for (let i = 0; i < opts.length; i += 2) if (opts[i] === '-C') cwd = path.resolve(cwd, opts[i + 1]);
+    // A -C naming $VAR, $(...) or ~user resolves to no real directory, where
+    // git diff would fail and check nothing. Fall back to the root.
+    let unknownDir = false;
+    for (let i = 0; i < opts.length; i += 2) {
+      if (opts[i] !== '-C' || unknownDir) continue;
+      const dir = path.resolve(cwd, opts[i + 1].replace(/^~(?=$|[/\\])/, () => os.homedir()));
+      if (fs.existsSync(dir)) cwd = dir;
+      else [unknownDir, cwd] = [true, root];
+    }
     if (all) {
       diffSets = [['HEAD']];
       what = 'this commit (-a)';
-    } else if (paths.length && CD.test(cmd.slice(0, commit.index))) {
-      // A cd before the commit leaves the pathspecs' directory unknown:
-      // check every tracked change, a superset of what the commit takes.
+    } else if (paths.length && (unknownDir || CD.test(cmd.slice(0, commit.index)))) {
+      // A cd before the commit, or a -C we cannot resolve, leaves the
+      // pathspecs' directory unknown: check every tracked change, a superset
+      // of what the commit takes.
       diffSets = [['HEAD']];
-      what = `the uncommitted changes (this commit names ${paths.join(' ')} after a cd, so all of them were checked)`;
+      const where = unknownDir ? 'under a -C directory nitbot cannot resolve' : 'after a cd';
+      what = `the uncommitted changes (this commit names ${paths.join(' ')} ${where}, so all of them were checked)`;
     } else if (paths.length) {
       // `git commit <paths>` commits those files as they are on disk, not the index.
       diffSets = include ? [['--cached'], ['HEAD', '--', ...paths]] : [['HEAD', '--', ...paths]];
