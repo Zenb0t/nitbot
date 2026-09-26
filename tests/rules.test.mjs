@@ -101,6 +101,16 @@ test('tls-disabled catches the bracket form of NODE_TLS_REJECT_UNAUTHORIZED, sti
   assert.deepEqual(run('a.js', `if (process.env['${name}'] === '0') warn();\n`), [], 'a bracket check is not a disable');
 });
 
+test('tls-disabled catches setter calls and backtick quotes for NODE_TLS_REJECT_UNAUTHORIZED', () => {
+  const name = 'NODE_TLS_REJECT_' + 'UNAUTHORIZED';
+  assert.deepEqual(rules(run('main.go', `os.Setenv("${name}", "0")\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('conftest.py', `monkeypatch.setenv("${name}", "0")\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.test.ts', `vi.stubEnv('${name}', '0');\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.js', `process.env.${name} = \`0\`;\n`)), ['tls-disabled']);
+  assert.deepEqual(run('a.js', `if (process.env.${name} !== "0") ok();\n`), [], 'a check is not a disable');
+  assert.deepEqual(run('main.go', `os.Setenv("${name}", "1")\n`), [], 'setting it to 1 keeps TLS on');
+});
+
 test('# and ; start code, not a comment, in languages that only have // comments', () => {
   const name = 'NODE_TLS_REJECT_' + 'UNAUTHORIZED';
   assert.deepEqual(rules(run('a.js', 'class A {\n  #agent = new https.Agent({ rejectUnauthorized: false });\n}\n')), ['tls-disabled']);

@@ -78,8 +78,9 @@ export const LINE_RULES = [
   },
   {
     // Not `code: true`: the env var's '0' is often a string, and YAML, .env
-    // and Dockerfiles count, as does env['...'] bracket access. Prose,
-    // comments and `=== '0'` checks that mention it do not.
+    // and Dockerfiles count, as do env['...'] bracket access and setter calls
+    // like setenv("...", "0"). Prose, comments and `=== '0'` checks that
+    // mention it do not.
     id: 'tls-disabled',
     tier: 'immediate',
     severity: 'P1',
@@ -88,7 +89,7 @@ export const LINE_RULES = [
     message: 'TLS certificate verification disabled.',
     test: (t) =>
       /rejectUnauthorized\s*:\s*false/.test(t) ||
-      /NODE_TLS_REJECT_UNAUTHORIZED["']?\]?(?:\s*(?::|=(?!=))|\s)\s*["']?0\b/.test(t) ||
+      /NODE_TLS_REJECT_UNAUTHORIZED["'`]?\]?(?:\s*(?::|=(?!=)|,)|\s)\s*["'`]?0\b/.test(t) ||
       /\bverify\s*=\s*False\b/.test(t) ||
       /InsecureSkipVerify\s*:\s*true/.test(t) ||
       /CURLOPT_SSL_VERIFY(PEER|HOST)\W+(false|0)\b/i.test(t),
