@@ -45,9 +45,10 @@ function postEdit(root, config, payload) {
   };
 }
 
-const GIT_CMD = String.raw`(?:^|[;&|(]\s*|\s)git\s+(?:-[cC]\s+\S+\s+)*`;
+const GIT_CMD = String.raw`(?:^|[;&|(]\s*|\s)git\s+((?:-[cC]\s+\S+\s+)*)`;
 const COMMIT = new RegExp(`${GIT_CMD}commit\\b`);
 const PUSH = new RegExp(`${GIT_CMD}push\\b`);
+const CD = /(?:^|[;&|(\n]|\s)(?:cd|pushd)(?:\s|$)/;
 
 function preBash(root, config, payload) {
   const gate = config.hook.commitGate;
@@ -57,12 +58,21 @@ function preBash(root, config, payload) {
   // Each entry is one `git diff` argument list; results are merged by path.
   let diffSets = null;
   let what = '';
+  // Pathspecs are relative to where the command runs, not the repo root.
+  let cwd = payload.cwd || root;
   const commit = COMMIT.exec(cmd);
   if (commit) {
     const { all, include, paths } = commitArgs(shellWords(cmd, commit.index + commit[0].length));
+    const opts = shellWords(commit[1]);
+    for (let i = 0; i < opts.length; i += 2) if (opts[i] === '-C') cwd = path.resolve(cwd, opts[i + 1]);
     if (all) {
       diffSets = [['HEAD']];
       what = 'this commit (-a)';
+    } else if (paths.length && CD.test(cmd.slice(0, commit.index))) {
+      // A cd before the commit leaves the pathspecs' directory unknown:
+      // check every tracked change, a superset of what the commit takes.
+      diffSets = [['HEAD']];
+      what = `the uncommitted changes (this commit names ${paths.join(' ')} after a cd, so all of them were checked)`;
     } else if (paths.length) {
       // `git commit <paths>` commits those files as they are on disk, not the index.
       diffSets = include ? [['--cached'], ['HEAD', '--', ...paths]] : [['HEAD', '--', ...paths]];
@@ -82,8 +92,6 @@ function preBash(root, config, payload) {
     return null;
   }
 
-  // Pathspecs are relative to where the command runs, not the repo root.
-  const cwd = payload.cwd || root;
   const files = new Map();
   for (const args of diffSets) {
     const text = git(cwd, ['-c', 'core.quotepath=false', 'diff', '--no-color', '--no-ext-diff', '-U1', ...args], { allowFail: true }) ?? '';

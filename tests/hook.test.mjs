@@ -116,3 +116,18 @@ test('shellWords and commitArgs', () => {
   assert.deepEqual(commitArgs(['-uno', '-S', 'a.js']), { all: false, include: false, paths: ['a.js'] });
   assert.equal(commitArgs(['-va']).all, true);
 });
+
+test('commit gate: pathspec commits run with `git -C <dir>` or after `cd <dir> &&` are checked', (t) => {
+  const r = repo(t);
+  r.write('sub/b.js', 'export const b = 1;\n');
+  r.commit('b');
+  r.write('sub/b.js', 'export const b = 1;\n  debugger;\n'); // unstaged
+  const bash = (command) => runHook('pre-bash', { cwd: r.dir, tool_input: { command } });
+  const reason = (command) => bash(command)?.hookSpecificOutput.permissionDecisionReason ?? '';
+
+  assert.match(reason('git commit sub/b.js -m x'), /debugger/);
+  assert.match(reason('git -C sub commit b.js -m x'), /debugger/, 'the pathspec is relative to the -C directory');
+  assert.match(reason('git -C sub -C . commit b.js -m x'), /debugger/, '-C options stack');
+  assert.match(reason('cd sub && git commit b.js -m x'), /debugger/, 'after a cd, every tracked change is checked');
+  assert.equal(bash('git -C sub commit a.js -m x'), null, 'a path the -C directory does not hold is still not checked');
+});
