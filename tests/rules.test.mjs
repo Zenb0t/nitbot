@@ -92,3 +92,11 @@ test('tls-disabled fires on config and code, not on prose or comments about it',
   assert.deepEqual(run('a.py', '# verify=False breaks auditing\n'), []);
   assert.deepEqual(run('a.js', "if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') warn();\n"), [], 'a check is not a disable');
 });
+
+test('tls-disabled catches the bracket form of NODE_TLS_REJECT_UNAUTHORIZED, still not a check', () => {
+  const name = 'NODE_TLS_REJECT_' + 'UNAUTHORIZED';
+  assert.deepEqual(rules(run('a.js', `process.env['${name}'] = '0';\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.js', `process.env["${name}"] = "0";\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.py', `os.environ["${name}"] = "0"\n`)), ['tls-disabled']);
+  assert.deepEqual(run('a.js', `if (process.env['${name}'] === '0') warn();\n`), [], 'a bracket check is not a disable');
+});
