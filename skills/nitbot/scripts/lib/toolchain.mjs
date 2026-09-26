@@ -65,7 +65,11 @@ export function exec(argv, { cwd, timeout = 120_000 } = {}) {
     child.on('error', (e) => finish(null, e));
     child.on('close', (code) => finish(timedOut ? null : code));
     // Grace timers are unref'd: once finished they must not hold the process open.
-    child.on('exit', (code) => setTimeout(() => finish(timedOut ? null : code), PIPE_GRACE_MS).unref());
+    // A tool that exited on its own did not time out, however long its pipes stay held.
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      setTimeout(() => finish(timedOut ? null : code), PIPE_GRACE_MS).unref();
+    });
     timer = setTimeout(() => {
       timedOut = true;
       killTree(child);

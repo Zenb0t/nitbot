@@ -37,6 +37,30 @@ test('a timeout kills the whole process tree, even a grandchild holding the outp
   assert.equal(alive(), false, 'the grandchild was killed with its parent');
 });
 
+test('a tool that exits just before its timeout is not reported as timed out, even with its pipes still held', { timeout: 30_000 }, async (t) => {
+  const r = tempRepo();
+  const pidFile = path.join(r.dir, 'grandchild.pid');
+  t.after(() => {
+    try {
+      process.kill(Number(fs.readFileSync(pidFile, 'utf8')));
+    } catch {} // nitbot-ignore: swallowed-error (already gone)
+    r.cleanup();
+  });
+  // The child exits 0 at once; a grandchild keeps the pipes open past the
+  // timeout, so exec waits out its pipe grace after the exit. Detached so
+  // Windows does not kill it with its parent's job object, and run outside
+  // the repo so it cannot block the repo's removal.
+  const grandchild = `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 10000)`;
+  const child = `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'inherit', detached: true, windowsHide: true, cwd: require('os').tmpdir() }); console.log('done'); setTimeout(() => process.exit(0), 100)`;
+  fs.writeFileSync(path.join(r.dir, 'child.js'), child);
+
+  const res = await exec([process.execPath, 'child.js'], { cwd: r.dir, timeout: 1500 });
+  assert.ok(fs.existsSync(pidFile), 'the grandchild was holding the pipes');
+  assert.equal(res.timedOut, false);
+  assert.equal(res.code, 0);
+  assert.match(res.stdout, /done/, 'the output is kept');
+});
+
 test('exec reports exit codes, output, and missing binaries', async () => {
   const ok = await exec([process.execPath, '-e', 'console.log("hi"); process.exit(3)']);
   assert.equal(ok.code, 3);
