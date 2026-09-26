@@ -126,7 +126,7 @@ function autoTarget(root, { hasHead, branch }) {
       kind: 'branch',
       label: `${branch} vs ${def} (merge-base ${base.slice(0, 7)})${dirty ? ' + uncommitted changes' : ''}`,
       slug: slugify(branch),
-      diffArgs: [base],
+      diffArgs: [base, '--', '.', NOT_OURS],
       untracked: ['.'],
       intentRange: `${base}..HEAD`,
     });
@@ -136,7 +136,7 @@ function autoTarget(root, { hasHead, branch }) {
       kind: 'worktree',
       label: 'uncommitted changes vs HEAD',
       slug: slugify(branch || 'worktree'),
-      diffArgs: ['HEAD'],
+      diffArgs: ['HEAD', '--', '.', NOT_OURS],
       untracked: ['.'],
     });
   }

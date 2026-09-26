@@ -118,3 +118,27 @@ test('a path target includes untracked files under it', (t) => {
   r.write('src/other-new.js', 'x\n');
   assert.deepEqual(paths(resolveTarget(r.dir, 'src/feature')), ['src/feature/new.js', 'src/feature/old.js']);
 });
+
+test('a tracked .nitbot/ file edited by nitbot stays out of the branch and worktree diffs', (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('a.js', '1\n');
+  r.write('.nitbot/dismissed.json', '[]\n');
+  r.commit('one');
+  r.git('checkout', '-q', '-b', 'feat');
+  r.write('b.js', 'b\n');
+  r.commit('feat');
+  r.write('.nitbot/dismissed.json', '["abc"]\n'); // a later `nitbot dismiss`
+
+  const branch = resolveTarget(r.dir);
+  assert.equal(branch.kind, 'branch');
+  assert.doesNotMatch(branch.label, /uncommitted/);
+  assert.deepEqual(paths(branch), ['b.js']);
+
+  r.git('checkout', '-q', 'main');
+  r.write('.nitbot/dismissed.json', '["abc"]\n');
+  r.write('a.js', '2\n');
+  const worktree = resolveTarget(r.dir);
+  assert.equal(worktree.kind, 'worktree');
+  assert.deepEqual(paths(worktree), ['a.js']);
+});
