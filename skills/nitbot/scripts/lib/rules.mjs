@@ -89,7 +89,7 @@ export const LINE_RULES = [
     message: 'TLS certificate verification disabled.',
     test: (t) =>
       /rejectUnauthorized\s*:\s*false/.test(t) ||
-      /NODE_TLS_REJECT_UNAUTHORIZED["'`]?\]?(?:\s*(?::|=(?!=)|,)|\s)\s*["'`]?0\b/.test(t) ||
+      /NODE_TLS_REJECT_UNAUTHORIZED["'`]?\]?(?:\s*(?:[:?]?=(?!=)|:|,)|\s)\s*["'`]?0\b/.test(t) ||
       /\bverify\s*=\s*False\b/.test(t) ||
       /InsecureSkipVerify\s*:\s*true/.test(t) ||
       /CURLOPT_SSL_VERIFY(PEER|HOST)\W+(false|0)\b/i.test(t),

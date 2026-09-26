@@ -122,3 +122,8 @@ test('# and ; start code, not a comment, in languages that only have // comments
   assert.deepEqual(run('a.ini', `; ${name}=0\n`), [], 'still a comment in an ini file');
   assert.deepEqual(run('a.sql', '-- rejectUnauthorized: false\n'), [], 'still a comment in SQL');
 });
+
+test('tls-disabled catches Makefile assignments', () => {
+  assert.deepEqual(rules(run('Makefile', 'export NODE_TLS_REJECT_UNAUTHORIZED := 0\n')), ['tls-disabled']);
+  assert.deepEqual(rules(run('Makefile', 'NODE_TLS_REJECT_UNAUTHORIZED ?= 0\n')), ['tls-disabled']);
+});
