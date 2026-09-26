@@ -12,6 +12,8 @@
 // Line rules see only added lines. `test(text, ctx)` returns true on a hit;
 // ctx = { file, lines, index } so a rule can look at the neighbouring line.
 // `code: true` rules see the line with string-literal contents blanked out.
+// `skipDocs: true` rules ignore prose files (.md, .txt, ...); `skipComments:
+// true` rules ignore lines that are only a comment.
 
 const JS = ['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'vue', 'svelte'];
 const PY = ['py'];
@@ -75,13 +77,19 @@ export const LINE_RULES = [
     },
   },
   {
+    // Not `code: true`: the env var's '0' is often a string, and YAML, .env
+    // and Dockerfiles count, as do env['...'] bracket access and setter calls
+    // like setenv("...", "0"). Prose, comments and `=== '0'` checks that
+    // mention it do not.
     id: 'tls-disabled',
     tier: 'immediate',
     severity: 'P1',
+    skipDocs: true,
+    skipComments: true,
     message: 'TLS certificate verification disabled.',
     test: (t) =>
       /rejectUnauthorized\s*:\s*false/.test(t) ||
-      /NODE_TLS_REJECT_UNAUTHORIZED\W+0/.test(t) ||
+      /NODE_TLS_REJECT_UNAUTHORIZED["'`]?\]?(?:\s*(?:[:?]?=(?!=)|:|,)|\s)\s*["'`]?0\b/.test(t) ||
       /\bverify\s*=\s*False\b/.test(t) ||
       /InsecureSkipVerify\s*:\s*true/.test(t) ||
       /CURLOPT_SSL_VERIFY(PEER|HOST)\W+(false|0)\b/i.test(t),

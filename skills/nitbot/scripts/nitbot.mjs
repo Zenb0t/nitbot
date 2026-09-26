@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { repoRoot, resolveTarget, git } from './lib/git.mjs';
+import { parseDiff } from './lib/diff.mjs';
 import { loadConfig, updateConfig, ensureNitbotDir, nitbotDir, readJson } from './lib/config.mjs';
 import { detect, summarize, formatFindings } from './lib/detect.mjs';
 import { classify, rulebooks } from './lib/registers.mjs';
@@ -36,7 +37,6 @@ function root() {
 async function context() {
   const r = root();
   const config = loadConfig(r);
-  // Resolve before creating .nitbot/, or its fresh .gitignore joins the diff.
   const target = resolveTarget(r, args[0]);
   const firstRun = ensureNitbotDir(r);
   const state = path.join(nitbotDir(r), 'state');
@@ -52,8 +52,13 @@ async function context() {
   const mode = requested || risk.mode;
   const { seed, lenses: rolled } = rollLenses({ count: risk.lenses ?? 2, registers: Object.keys(registers), seed: flags.seed ? Number(flags.seed) : undefined });
   const areas = changedLines > config.review.largeDiffLines ? splitAreas(reviewable, config.review.splitLines) : null;
+  // `evidence` reuses these answers instead of probing every binary again.
+  const toolProbes = {};
+  const tools = await discoverTools(r, { probes: toolProbes });
 
   fs.writeFileSync(path.join(state, 'current.diff'), target.fnDiffText ?? target.diffText);
+  // The plain diff is what `evidence` checks, so both commands see one change set.
+  fs.writeFileSync(path.join(state, 'target.diff'), target.diffText);
   fs.writeFileSync(path.join(state, 'intent.md'), target.intent || '(no stated intent)\n');
   fs.writeFileSync(path.join(state, 'map.md'), formatMap(map) + '\n');
   const run = {
@@ -75,6 +80,7 @@ async function context() {
     lensSeed: seed,
     lenses: rolled,
     areas,
+    toolProbes,
   };
   fs.writeFileSync(path.join(state, 'run.json'), JSON.stringify(run, null, 2) + '\n');
 
@@ -91,8 +97,9 @@ async function context() {
   out.push(`risk:     ${risk.level} (score ${risk.score}${risk.reasons.length ? `: ${risk.reasons.join('; ')}` : ''})`);
   out.push(`mode:     ${mode}${requested ? ' (requested)' : ' (from risk)'}`);
   out.push(`lenses:   ${rolled.map((l) => `${l.id} "${l.name}"`).join(', ')} [seed ${seed}]`);
-  out.push(`tools:    ${describeTools(discoverTools(r))}`);
+  out.push(`tools:    ${describeTools(tools)}`);
 
+  if (config.invalid.length) directives.push(`CONFIG_INVALID: ${config.invalid.join('; ')}. Its settings and ignores are NOT applied. Tell the user so they can fix the file.`);
   if (firstRun) directives.push('FIRST_RUN: created .nitbot/ (with its own .gitignore). Mention it once in the report.');
   if (!reviewable.length) directives.push('NOTHING_TO_REVIEW: the target has no reviewable changes. Tell the user and stop; do not spawn agents.');
   if (Object.keys(registers).every((k) => k === 'docs')) directives.push('DOCS_ONLY: run quick mode and review for accuracy against the code, not style.');
@@ -116,16 +123,22 @@ async function context() {
 async function evidence() {
   const r = root();
   const config = loadConfig(r);
-  const run = readJson(path.join(nitbotDir(r), 'state', 'run.json'), null);
-  if (!run) fail('NO_RUN: run `nitbot context` first.');
-  const target = resolveTarget(r, run.targetArg ?? undefined);
-  const ev = gatherEvidence(r, target, {
+  const state = path.join(nitbotDir(r), 'state');
+  const run = readJson(path.join(state, 'run.json'), null);
+  const diffFile = path.join(state, 'target.diff');
+  if (!run || !fs.existsSync(diffFile)) fail('NO_RUN: run `nitbot context` first.');
+  // Never resolve the target again: a commit, a stage, or nitbot's own files
+  // appearing since `context` would make the evidence describe another change.
+  const target = { label: run.label, files: parseDiff(fs.readFileSync(diffFile, 'utf8')), pr: run.pr };
+  const ev = await gatherEvidence(r, target, {
     config,
     runTests: flags['no-tests'] ? false : config.evidence.runTests,
     toolTimeout: config.evidence.toolTimeoutSec * 1000,
     testTimeout: config.evidence.testTimeoutSec * 1000,
+    probes: run.toolProbes,
   });
-  const state = path.join(nitbotDir(r), 'state');
+  const head = git(r, ['rev-parse', 'HEAD'], { allowFail: true })?.trim() ?? null;
+  if (head !== run.head) ev.warning = 'HEAD moved since `nitbot context`: tools and tests ran on the current tree, which may not match the reviewed diff.';
   const text = formatEvidence(ev);
   fs.writeFileSync(path.join(state, 'evidence.json'), JSON.stringify(ev, null, 2) + '\n');
   fs.writeFileSync(path.join(state, 'evidence.txt'), text + '\n');
@@ -215,6 +228,7 @@ async function hooks() {
     `stop pass:    ${c.hook.stopPass ? 'on' : 'off'} (deferred tier once per session)`,
     `ignored rules: ${c.detector.ignoreRules.join(', ') || 'none'}`,
     `ignored files: ${c.detector.ignoreFiles.join(', ') || 'none'}`,
+    ...c.invalid.map((e) => `INVALID (not applied): ${e}`),
   ].join('\n'));
 }
 

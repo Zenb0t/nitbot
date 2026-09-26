@@ -72,3 +72,98 @@ test('explicit targets: staged, commit, range, path', (t) => {
   assert.match(unchanged.label, /full contents/);
   assert.throws(() => resolveTarget(r.dir, 'no-such-thing'), /Unrecognized target/);
 });
+
+test("nitbot's own .nitbot/ folder never makes a clean tree look dirty", (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('a.js', '1\n');
+  r.commit('one');
+  r.write('a.js', '2\n');
+  r.commit('two');
+  r.write('.nitbot/.gitignore', 'state/\n');
+  r.write('.nitbot/config.json', '{}\n');
+  const target = resolveTarget(r.dir);
+  assert.equal(target.kind, 'commit', 'still the last commit, not "uncommitted changes"');
+  assert.deepEqual(paths(target), ['a.js']);
+
+  r.git('checkout', '-q', '-b', 'feat');
+  r.write('b.js', 'b\n');
+  r.git('add', 'b.js');
+  r.git('commit', '-q', '-m', 'feat');
+  assert.deepEqual(paths(resolveTarget(r.dir)), ['b.js'], 'untracked .nitbot files stay out of a branch review');
+});
+
+test('paths with spaces come out of git without the trailing tab', (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('my file.js', '1\n');
+  r.commit('one');
+  r.write('my file.js', '2\n');
+  assert.deepEqual(paths(resolveTarget(r.dir)), ['my file.js']);
+});
+
+test('a path target includes untracked files under it', (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('src/feature/old.js', 'a\n');
+  r.write('src/other.js', 'o\n');
+  r.commit('init');
+
+  r.write('src/feature/new.js', 'n\n');
+  const onlyNew = resolveTarget(r.dir, 'src/feature');
+  assert.match(onlyNew.label, /uncommitted changes/);
+  assert.deepEqual(paths(onlyNew), ['src/feature/new.js'], 'the new file, not the unchanged one as "added"');
+
+  r.write('src/feature/old.js', 'b\n');
+  r.write('src/other-new.js', 'x\n');
+  assert.deepEqual(paths(resolveTarget(r.dir, 'src/feature')), ['src/feature/new.js', 'src/feature/old.js']);
+});
+
+test('a tracked .nitbot/ file edited by nitbot stays out of the branch and worktree diffs', (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('a.js', '1\n');
+  r.write('.nitbot/dismissed.json', '[]\n');
+  r.commit('one');
+  r.git('checkout', '-q', '-b', 'feat');
+  r.write('b.js', 'b\n');
+  r.commit('feat');
+  r.write('.nitbot/dismissed.json', '["abc"]\n'); // a later `nitbot dismiss`
+
+  const branch = resolveTarget(r.dir);
+  assert.equal(branch.kind, 'branch');
+  assert.doesNotMatch(branch.label, /uncommitted/);
+  assert.deepEqual(paths(branch), ['b.js']);
+
+  r.git('checkout', '-q', 'main');
+  r.write('.nitbot/dismissed.json', '["abc"]\n');
+  r.write('a.js', '2\n');
+  const worktree = resolveTarget(r.dir);
+  assert.equal(worktree.kind, 'worktree');
+  assert.deepEqual(paths(worktree), ['a.js']);
+});
+
+test('committed .nitbot/ changes on a branch are reviewed; nitbot writes on top of them are not', (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('a.js', '1\n');
+  r.commit('one');
+  r.git('checkout', '-q', '-b', 'feat');
+  r.write('.nitbot/config.json', '{ "detector": { "ignoreFiles": ["src/**"] } }\n');
+  r.commit('ignore src');
+
+  const only = resolveTarget(r.dir);
+  assert.equal(only.kind, 'branch');
+  assert.deepEqual(paths(only), ['.nitbot/config.json'], 'a team config change is the branch change under review');
+
+  r.write('b.js', 'b\n');
+  r.commit('feat');
+  r.write('.nitbot/.gitignore', 'state/\n'); // nitbot's first run
+  r.write('.nitbot/config.json', '{ "detector": { "ignoreFiles": ["src/**", "extra/**"] } }\n'); // a later `nitbot ignore`
+  const both = resolveTarget(r.dir);
+  assert.doesNotMatch(both.label, /uncommitted/);
+  assert.deepEqual(paths(both), ['.nitbot/config.json', 'b.js']);
+  assert.match(both.diffText, /src\/\*\*/);
+  assert.doesNotMatch(both.diffText, /extra/, 'the committed version is reviewed, not the uncommitted nitbot edit');
+  assert.match(both.fnDiffText, /src\/\*\*/);
+});

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detect } from '../skills/nitbot/scripts/lib/detect.mjs';
-import { fileAsAdded } from '../skills/nitbot/scripts/lib/diff.mjs';
+import { fileAsAdded, parseDiff } from '../skills/nitbot/scripts/lib/diff.mjs';
 
 const run = (path, content, opts = {}) => detect([fileAsAdded(path, content)], { config: { detector: { ignoreRules: [], ignoreFiles: [] } }, ...opts });
 const rules = (findings) => findings.map((f) => f.rule);
@@ -73,4 +73,57 @@ test('lockfile drift needs a pin change and an untouched lockfile', () => {
   const exists = (p) => p === 'package-lock.json';
   assert.deepEqual(rules(detect([pkg], { exists })), ['lockfile-drift']);
   assert.deepEqual(detect([pkg, fileAsAdded('package-lock.json', '{}\n')], { exists }), []);
+});
+
+test('an added key file with a space in its name is still a secret file', () => {
+  const text = 'diff --git a/prod key.pem b/prod key.pem\nnew file mode 100644\n--- /dev/null\n+++ b/prod key.pem\t\n@@ -0,0 +1 @@\n+x\n';
+  assert.deepEqual(rules(detect(parseDiff(text))), ['secret-file']);
+});
+
+test('tls-disabled fires on config and code, not on prose or comments about it', () => {
+  assert.deepEqual(rules(run('a.py', 'requests.get(url, verify=False)\n')), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.js', "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n")), ['tls-disabled']);
+  assert.deepEqual(rules(run('Dockerfile', 'ENV NODE_TLS_REJECT_UNAUTHORIZED=0\n')), ['tls-disabled']);
+  assert.deepEqual(rules(run('ci.yml', 'env:\n  NODE_TLS_REJECT_UNAUTHORIZED: "0"\n')), ['tls-disabled']);
+
+  assert.deepEqual(run('SECURITY.md', 'Set rejectUnauthorized: false only in dev.\n'), []);
+  assert.deepEqual(run('CHANGELOG.txt', 'Removed verify=False from the client.\n'), []);
+  assert.deepEqual(run('a.js', '// never set rejectUnauthorized: false here\n'), []);
+  assert.deepEqual(run('a.py', '# verify=False breaks auditing\n'), []);
+  assert.deepEqual(run('a.js', "if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') warn();\n"), [], 'a check is not a disable');
+});
+
+test('tls-disabled catches the bracket form of NODE_TLS_REJECT_UNAUTHORIZED, still not a check', () => {
+  const name = 'NODE_TLS_REJECT_' + 'UNAUTHORIZED';
+  assert.deepEqual(rules(run('a.js', `process.env['${name}'] = '0';\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.js', `process.env["${name}"] = "0";\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.py', `os.environ["${name}"] = "0"\n`)), ['tls-disabled']);
+  assert.deepEqual(run('a.js', `if (process.env['${name}'] === '0') warn();\n`), [], 'a bracket check is not a disable');
+});
+
+test('tls-disabled catches setter calls and backtick quotes for NODE_TLS_REJECT_UNAUTHORIZED', () => {
+  const name = 'NODE_TLS_REJECT_' + 'UNAUTHORIZED';
+  assert.deepEqual(rules(run('main.go', `os.Setenv("${name}", "0")\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('conftest.py', `monkeypatch.setenv("${name}", "0")\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.test.ts', `vi.stubEnv('${name}', '0');\n`)), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.js', `process.env.${name} = \`0\`;\n`)), ['tls-disabled']);
+  assert.deepEqual(run('a.js', `if (process.env.${name} !== "0") ok();\n`), [], 'a check is not a disable');
+  assert.deepEqual(run('main.go', `os.Setenv("${name}", "1")\n`), [], 'setting it to 1 keeps TLS on');
+});
+
+test('# and ; start code, not a comment, in languages that only have // comments', () => {
+  const name = 'NODE_TLS_REJECT_' + 'UNAUTHORIZED';
+  assert.deepEqual(rules(run('a.js', 'class A {\n  #agent = new https.Agent({ rejectUnauthorized: false });\n}\n')), ['tls-disabled']);
+  assert.deepEqual(rules(run('a.ts', ';(() => https.get(url, { rejectUnauthorized: false }))();\n')), ['tls-disabled']);
+
+  assert.deepEqual(run('a.py', '# requests.get(url, verify=False)\n'), [], 'still a comment in Python');
+  assert.deepEqual(run('Dockerfile', `# ENV ${name}=0\n`), [], 'still a comment in a Dockerfile');
+  assert.deepEqual(run('.env.example', `# ${name}=0\n`), [], 'still a comment in an env file');
+  assert.deepEqual(run('a.ini', `; ${name}=0\n`), [], 'still a comment in an ini file');
+  assert.deepEqual(run('a.sql', '-- rejectUnauthorized: false\n'), [], 'still a comment in SQL');
+});
+
+test('tls-disabled catches Makefile assignments', () => {
+  assert.deepEqual(rules(run('Makefile', 'export NODE_TLS_REJECT_UNAUTHORIZED := 0\n')), ['tls-disabled']);
+  assert.deepEqual(rules(run('Makefile', 'NODE_TLS_REJECT_UNAUTHORIZED ?= 0\n')), ['tls-disabled']);
 });

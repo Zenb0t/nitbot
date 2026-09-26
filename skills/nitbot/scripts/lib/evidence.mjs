@@ -9,8 +9,10 @@ import { detect } from './detect.mjs';
 import { run } from './git.mjs';
 
 const TYPECHECK_OUTSIDE_SAMPLE = 5;
+const MAX_PER_FILE_RUNS = 50;
 
-export function gatherEvidence(root, target, { config, runTests = false, toolTimeout = 120_000, testTimeout = 300_000 } = {}) {
+// `tools` overrides discovery (tests); `probes` is the cache from `context`.
+export async function gatherEvidence(root, target, { config, runTests = false, toolTimeout = 120_000, testTimeout = 300_000, probes, tools, maxPerFileRuns = MAX_PER_FILE_RUNS } = {}) {
   const changed = target.files.filter((f) => f.status !== 'deleted' && !f.binary);
   const added = new Map(changed.map((f) => [f.path, new Set(f.lines.filter((l) => l.added).map((l) => l.n))]));
   const changedFiles = changed.map((f) => f.path).filter((p) => fs.existsSync(path.join(root, p)));
@@ -19,7 +21,8 @@ export function gatherEvidence(root, target, { config, runTests = false, toolTim
     generatedAt: new Date().toISOString(),
     target: target.label,
     tools: [],
-    tests: null,
+    tests: [], // one entry per test runner: a repo can have several
+
     coverage: coverage(root, changed),
     ci: target.pr ? ciStatus(root, target.pr.number) : null,
     detector: detect(target.files, { config, exists: (p) => fs.existsSync(path.join(root, p)) }),
@@ -29,35 +32,37 @@ export function gatherEvidence(root, target, { config, runTests = false, toolTim
   // CI results for that commit are the evidence instead.
   const localCodeMatches = !target.pr || target.pr.checkedOut;
 
-  for (const tool of discoverTools(root)) {
+  for (const tool of tools ?? (await discoverTools(root, { probes }))) {
     if (tool.kind === 'test') {
       if (!runTests || !localCodeMatches) {
-        evidence.tests = { tool: tool.id, status: 'not-run', reason: !localCodeMatches ? 'PR head not checked out; see CI' : 'tests not requested (--tests)' };
+        evidence.tests.push({ tool: tool.id, status: 'not-run', reason: !localCodeMatches ? 'PR head not checked out; see CI' : 'tests not requested (--tests)' });
         continue;
       }
-      evidence.tests = runTestTool(root, tool, changedFiles, testTimeout);
+      evidence.tests.push(await runTestTool(root, tool, changedFiles, testTimeout));
       continue;
     }
     if (!localCodeMatches) {
       evidence.tools.push({ id: tool.id, kind: tool.kind, status: 'skipped', note: 'PR head not checked out; see CI' });
       continue;
     }
-    evidence.tools.push(runAnalysisTool(root, tool, changedFiles, added, toolTimeout));
+    evidence.tools.push(await runAnalysisTool(root, tool, changedFiles, added, toolTimeout, maxPerFileRuns));
   }
 
   return evidence;
 }
 
-function runAnalysisTool(root, tool, changedFiles, added, timeout) {
+async function runAnalysisTool(root, tool, changedFiles, added, timeout, maxPerFileRuns) {
   const files = tool.exts ? changedFiles.filter((f) => tool.exts.includes(f.split('.').pop())) : changedFiles;
   if (tool.scope === 'files' && !files.length) return { id: tool.id, kind: tool.kind, status: 'skipped', note: 'no matching changed files' };
 
-  const runs = tool.perFile ? files.slice(0, 50).map((f) => [f]) : [files];
+  const runs = tool.perFile ? files.slice(0, maxPerFileRuns).map((f) => [f]) : [files];
+  // A clean result over part of the change must not read as a clean change.
+  const unscanned = tool.perFile ? files.slice(maxPerFileRuns) : [];
   const issues = [];
   let status = 'ok';
   let ms = 0;
   for (const batch of runs) {
-    const res = exec(tool.argv(batch), { cwd: root, timeout });
+    const res = await exec(tool.argv(batch), { cwd: root, timeout });
     ms += res.ms;
     if (res.missing) return { id: tool.id, kind: tool.kind, status: 'unavailable', note: firstLine(res.stderr) };
     if (res.timedOut) {
@@ -83,6 +88,10 @@ function runAnalysisTool(root, tool, changedFiles, added, timeout) {
     else elsewhere.push(i);
   }
   const result = { id: tool.id, kind: tool.kind, status, ms, onDiff, preexistingInChangedFiles: inChangedFiles.length };
+  if (unscanned.length) {
+    result.note = `only ${runs.length} of ${files.length} changed files scanned`;
+    result.unscanned = unscanned;
+  }
   // A type error in an untouched caller is often CAUSED by the change (a new
   // signature). Keep a sample; lint noise elsewhere is dropped to a count.
   if (tool.kind === 'typecheck') {
@@ -94,10 +103,10 @@ function runAnalysisTool(root, tool, changedFiles, added, timeout) {
   return result;
 }
 
-function runTestTool(root, tool, changedFiles, timeout) {
+async function runTestTool(root, tool, changedFiles, timeout) {
   const files = tool.exts ? changedFiles.filter((f) => tool.exts.includes(f.split('.').pop())) : changedFiles;
   if (tool.scope === 'files' && !files.length) return { tool: tool.id, status: 'not-run', reason: 'no matching changed files' };
-  const res = exec(tool.argv(files), { cwd: root, timeout });
+  const res = await exec(tool.argv(files), { cwd: root, timeout });
   if (res.missing) return { tool: tool.id, status: 'unavailable' };
   if (res.timedOut) return { tool: tool.id, status: 'timeout', ms: res.ms };
   const out = `${res.stdout}\n${res.stderr}`;
@@ -220,6 +229,7 @@ function ciStatus(root, number) {
 // Bounded text for the parent's context. Everything else stays in the JSON.
 export function formatEvidence(ev, { maxItems = 25 } = {}) {
   const out = [`EVIDENCE for ${ev.target}`];
+  if (ev.warning) out.push(`WARNING: ${ev.warning}`);
   if (ev.ci) {
     out.push(`CI: ${ev.ci.status}${ev.ci.failed?.length ? ` (${ev.ci.failed.map((f) => f.name).join(', ')}); read failures with: gh run view <id> --log-failed` : ''}`);
   }
@@ -229,13 +239,12 @@ export function formatEvidence(ev, { maxItems = 25 } = {}) {
       continue;
     }
     const extra = [t.preexistingInChangedFiles ? `${t.preexistingInChangedFiles} pre-existing in changed files` : '', t.elsewhere ? `${t.elsewhere} elsewhere` : ''].filter(Boolean).join(', ');
-    out.push(`${t.id}: ${t.onDiff.length} on changed lines${extra ? ` (${extra}, not shown)` : ''}`);
+    out.push(`${t.id}: ${t.onDiff.length} on changed lines${extra ? ` (${extra}, not shown)` : ''}${t.note ? `; ${t.note}, the rest are unchecked` : ''}`);
     for (const i of t.onDiff.slice(0, maxItems)) out.push(`  ${i.file}:${i.line} ${i.rule}: ${i.message}`);
     if (t.onDiff.length > maxItems) out.push(`  ... ${t.onDiff.length - maxItems} more in evidence.json`);
     for (const i of t.elsewhereSample ?? []) out.push(`  (outside diff, may be caused by it) ${i.file}:${i.line} ${i.rule}: ${i.message}`);
   }
-  if (ev.tests) {
-    const t = ev.tests;
+  for (const t of ev.tests) {
     out.push(`tests (${t.tool}): ${t.status}${t.reason ? ` - ${t.reason}` : ''}`);
     for (const f of t.failures ?? []) out.push(`  ${f}`);
   }

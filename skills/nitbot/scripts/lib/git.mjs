@@ -9,6 +9,12 @@ import { parseDiff, fileAsAdded } from './diff.mjs';
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const DIFF = ['-c', 'core.quotepath=false', 'diff', '--no-color', '--no-ext-diff', '-M', '-U3'];
 const MAX_UNTRACKED_BYTES = 1024 * 1024;
+// nitbot's own folder. Its first run creates .nitbot/.gitignore, and `ignore` or
+// `dismiss` edit files there; none of that is the user's change under review.
+// What a branch commits there (config.json, dismissed.json) is, so branch
+// targets diff it separately, committed changes only.
+const OURS = '.nitbot';
+const NOT_OURS = `:(exclude)${OURS}`;
 
 export function run(cmd, args, { cwd, allowFail = false } = {}) {
   try {
@@ -110,10 +116,10 @@ function autoTarget(root, { hasHead, branch }) {
       label: 'initial import (no commits yet): staged + untracked files',
       slug: slugify(branch || 'initial'),
       diffArgs: ['--cached', EMPTY_TREE],
-      untracked: true,
+      untracked: ['.'],
     });
   }
-  const dirty = Boolean(tryGit(root, ['status', '--porcelain']));
+  const dirty = Boolean(tryGit(root, ['status', '--porcelain', '--', '.', NOT_OURS]));
   const def = defaultBranch(root);
   const base = def && tryGit(root, ['merge-base', def, 'HEAD']);
   const head = tryGit(root, ['rev-parse', 'HEAD']);
@@ -123,8 +129,9 @@ function autoTarget(root, { hasHead, branch }) {
       kind: 'branch',
       label: `${branch} vs ${def} (merge-base ${base.slice(0, 7)})${dirty ? ' + uncommitted changes' : ''}`,
       slug: slugify(branch),
-      diffArgs: [base],
-      untracked: true,
+      diffArgs: [base, '--', '.', NOT_OURS],
+      oursDiffArgs: [base, 'HEAD', '--', OURS],
+      untracked: ['.'],
       intentRange: `${base}..HEAD`,
     });
   }
@@ -133,8 +140,8 @@ function autoTarget(root, { hasHead, branch }) {
       kind: 'worktree',
       label: 'uncommitted changes vs HEAD',
       slug: slugify(branch || 'worktree'),
-      diffArgs: ['HEAD'],
-      untracked: true,
+      diffArgs: ['HEAD', '--', '.', NOT_OURS],
+      untracked: ['.'],
     });
   }
   const parent = tryGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD^']) ?? EMPTY_TREE;
@@ -148,9 +155,11 @@ function autoTarget(root, { hasHead, branch }) {
 }
 
 function pathTarget(root, rel, hasHead) {
-  const changed = hasHead ? git(root, [...DIFF, 'HEAD', '--', rel], { allowFail: true }) : null;
-  if (changed && changed.trim()) {
-    return build(root, { kind: 'path', label: `uncommitted changes in ${rel}`, slug: slugify(rel), diffArgs: ['HEAD', '--', rel] });
+  // Pending work under the path is tracked edits plus files git does not know yet.
+  const diffArgs = hasHead ? ['HEAD', '--', rel] : ['--cached', EMPTY_TREE, '--', rel];
+  const changed = git(root, [...DIFF, ...diffArgs], { allowFail: true });
+  if (changed?.trim() || listUntracked(root, [rel]).length) {
+    return build(root, { kind: 'path', label: `uncommitted changes in ${rel}`, slug: slugify(rel), diffArgs, untracked: [rel] });
   }
   // Unchanged path: review the code as it stands, every line as "added".
   const files = [];
@@ -189,13 +198,18 @@ function prTarget(root, number) {
 }
 
 function build(root, spec) {
-  let diffText = git(root, [...DIFF, ...spec.diffArgs]);
-  // The reviewer's copy shows whole enclosing functions instead of 3 lines of
-  // context: the cheapest context upgrade there is, and it costs no tool calls.
-  let fnDiffText = git(root, [...DIFF, '--function-context', ...spec.diffArgs], { allowFail: true }) ?? diffText;
+  let diffText = '';
+  let fnDiffText = '';
+  // oursDiffArgs covers paths diffArgs excludes, so the two texts just concatenate.
+  for (const args of [spec.diffArgs, spec.oursDiffArgs].filter(Boolean)) {
+    const text = git(root, [...DIFF, ...args]);
+    diffText += text;
+    // The reviewer's copy shows whole enclosing functions instead of 3 lines of
+    // context: the cheapest context upgrade there is, and it costs no tool calls.
+    fnDiffText += git(root, [...DIFF, '--function-context', ...args], { allowFail: true }) ?? text;
+  }
   if (spec.untracked) {
-    const untracked = (tryGit(root, ['ls-files', '--others', '--exclude-standard']) ?? '').split('\n').filter(Boolean);
-    for (const p of untracked) {
+    for (const p of listUntracked(root, spec.untracked)) {
       const content = readSmallText(path.join(root, p));
       if (content === null) continue;
       diffText += syntheticDiff(p, content);
@@ -206,6 +220,10 @@ function build(root, spec) {
     ? (tryGit(root, ['log', '--format=- %s%n%b', '--no-merges', '-n', '30', spec.intentRange]) ?? '').replace(/\n{2,}/g, '\n').trim()
     : '';
   return { kind: spec.kind, label: spec.label, slug: spec.slug, diffText, fnDiffText, files: parseDiff(diffText), intent };
+}
+
+function listUntracked(root, pathspecs) {
+  return (tryGit(root, ['ls-files', '--others', '--exclude-standard', '--', ...pathspecs, NOT_OURS]) ?? '').split('\n').filter(Boolean);
 }
 
 // Diff text for a file git does not track yet, so reviewers read one format.

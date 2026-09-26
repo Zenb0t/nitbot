@@ -59,3 +59,48 @@ test('detect exits 2 on findings and 0 when clean', (t) => {
   r.write('a.js', 'y\n');
   assert.equal(r.cli('detect').code, 0);
 });
+
+test("evidence checks the diff context saved, even after nitbot's first run creates .nitbot/", (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('a.js', 'x\n');
+  r.commit('init');
+  r.write('a.js', 'x\n  debugger;\n');
+  r.commit('add a breakpoint');
+
+  const first = r.cli('context');
+  assert.match(first.out, /target:\s+last commit .* add a breakpoint/);
+  assert.match(r.cli('context').out, /target:\s+last commit/, 'the second run is not "uncommitted changes" to .nitbot/');
+  const ev = r.cli('evidence', '--no-tests', '--print').out;
+  assert.match(ev, /EVIDENCE for last commit/);
+  assert.match(ev, /a\.js:2 debugger/);
+  assert.doesNotMatch(ev, /WARNING/);
+
+  r.write('b.js', 'b\n');
+  r.commit('another');
+  const moved = r.cli('evidence', '--no-tests', '--print').out;
+  assert.match(moved, /EVIDENCE for last commit .* add a breakpoint/, 'still the reviewed change');
+  assert.match(moved, /WARNING: HEAD moved/);
+});
+
+test('a config file that is not valid JSON is reported, and never overwritten', (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('a.js', 'x\n');
+  r.commit('init');
+  const broken = '{\n  "review": { "mode": "full" },\n}\n';
+  r.write('.nitbot/config.json', broken);
+
+  const res = r.cli('ignore', 'rule', 'swallowed-error');
+  assert.equal(res.code, 1);
+  assert.match(res.out, /CONFIG_INVALID: \.nitbot\/config\.json is not valid JSON/);
+  assert.equal(fs.readFileSync(path.join(r.dir, '.nitbot/config.json'), 'utf8'), broken, 'the team file is untouched');
+
+  assert.match(r.cli('context').out, /CONFIG_INVALID: \.nitbot\/config\.json: .*NOT applied/);
+  assert.match(r.cli('hooks').out, /INVALID \(not applied\): \.nitbot\/config\.json/);
+
+  r.write('.nitbot/config.json', '{ "review": { "mode": "full" } }\n');
+  assert.equal(r.cli('ignore', 'rule', 'swallowed-error').code, 0);
+  const saved = JSON.parse(fs.readFileSync(path.join(r.dir, '.nitbot/config.json'), 'utf8'));
+  assert.deepEqual(saved, { review: { mode: 'full' }, detector: { ignoreRules: ['swallowed-error'] } }, 'existing keys kept');
+});

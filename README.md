@@ -22,7 +22,8 @@ nitbot context  (script, 0 tokens)
                     run.json   (registers, risk score -> mode, rolled lenses)
         |
         +-- nitbot evidence (script, 0 tokens) ---------------------------+
-        |     your linters, type checker, related tests, semgrep/gitleaks |
+        |     same diff as context; linters, type checker, related tests, |
+        |     semgrep/gitleaks                                            |
         |     if configured, diff coverage, PR CI status; filtered to the |
         |     changed lines; written to a file the parent reads LATER     |
         |                                                                 |

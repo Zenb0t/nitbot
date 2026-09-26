@@ -99,8 +99,14 @@ function parseHeader(file, line) {
     file.oldPath = unquote(line.slice('rename from '.length));
   } else if (line.startsWith('rename to ')) file.path = unquote(line.slice('rename to '.length));
   else if (line.startsWith('Binary files ')) file.binary = true;
-  else if (line.startsWith('--- ') && line !== '--- /dev/null') file.oldPath = stripPrefix(unquote(line.slice(4)), 'a/');
-  else if (line.startsWith('+++ ') && line !== '+++ /dev/null') file.path = stripPrefix(unquote(line.slice(4)), 'b/');
+  else if (line.startsWith('--- ') && line !== '--- /dev/null') file.oldPath = stripPrefix(unquote(headerPath(line)), 'a/');
+  else if (line.startsWith('+++ ') && line !== '+++ /dev/null') file.path = stripPrefix(unquote(headerPath(line)), 'b/');
+}
+
+// git ends a ---/+++ path that contains a space with a TAB, so patch(1) can
+// find where it stops. A path that really ends in a tab is quoted instead.
+function headerPath(line) {
+  return line.slice(4).replace(/\t$/, '');
 }
 
 function stripPrefix(p, prefix) {

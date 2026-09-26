@@ -5,7 +5,7 @@ nitbot installs three Claude Code hooks with the plugin. They cost nothing when 
 | Hook | When | Checks | Default |
 |---|---|---|---|
 | Edit check | after every Edit/Write | immediate tier on the lines just added: leaked keys, private keys, conflict markers, `.only` tests, debugger statements, disabled TLS, committed `.env`/key files | on |
-| Commit gate | before `git commit` / `git push` via the Bash tool | the same immediate tier on the staged changes or the commits being pushed | `auto`: on, unless the repo has its own pre-commit, husky, or lefthook setup |
+| Commit gate | before `git commit` / `git push` via the Bash tool | the same immediate tier on what the commit will contain (the staged changes; all tracked changes for `-a`; the named files for `git commit <paths>`) or the commits being pushed | `auto`: on, unless the repo has its own pre-commit, husky, or lefthook setup |
 | Stop pass | when the session is about to end | the deferred tier (swallowed errors, new suppressions, skipped tests, sleeps in tests, lockfile drift) on files edited this session, each reported once | off |
 
 ## Commands
