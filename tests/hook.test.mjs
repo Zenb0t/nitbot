@@ -125,11 +125,11 @@ test('commit gate: `git commit --pathspec-from-file` is checked against the file
 
 test('shellWords and commitArgs', () => {
   assert.deepEqual(shellWords(String.raw`-m "a b" 'c d' e\ f; rm x`), ['-m', 'a b', 'c d', 'e f']);
-  assert.deepEqual(commitArgs(shellWords('-qm msg -- "my file.js" 2> /dev/null')), { all: false, include: false, fromFile: false, paths: ['my file.js'] });
-  assert.deepEqual(commitArgs(['-F', '-', '<<EOF']), { all: false, include: false, fromFile: false, paths: [] });
-  assert.deepEqual(commitArgs(['-uno', '-S', 'a.js']), { all: false, include: false, fromFile: false, paths: ['a.js'] });
+  assert.deepEqual(commitArgs(shellWords('-qm msg -- "my file.js" 2> /dev/null')), { all: false, include: false, fromFile: false, expanded: false, paths: ['my file.js'] });
+  assert.deepEqual(commitArgs(['-F', '-', '<<EOF']), { all: false, include: false, fromFile: false, expanded: false, paths: [] });
+  assert.deepEqual(commitArgs(['-uno', '-S', 'a.js']), { all: false, include: false, fromFile: false, expanded: false, paths: ['a.js'] });
   assert.equal(commitArgs(['-va']).all, true);
-  assert.deepEqual(commitArgs(['--pathspec-from-file', '-', '-m', 'x']), { all: false, include: false, fromFile: true, paths: [] });
+  assert.deepEqual(commitArgs(['--pathspec-from-file', '-', '-m', 'x']), { all: false, include: false, fromFile: true, expanded: false, paths: [] });
 });
 
 test('commit gate: pathspec commits run with `git -C <dir>` or after `cd <dir> &&` are checked', (t) => {
@@ -169,4 +169,22 @@ test('commit gate: a `git -C` directory the hook cannot resolve still gets check
   const tilde = `~/${path.basename(r.dir)}`;
   assert.match(reason(`git -C ${tilde} commit -m x`), /focused-test/, 'a leading ~ is the home directory');
   assert.match(reason(`git -C ${tilde}/sub commit b.js -m x`), /debugger/);
+});
+
+test('commit gate: path words the shell expands, and trailing comments, still get checked', (t) => {
+  const r = repo(t);
+  r.write('src/a.js', 'export const a = 1;\n  debugger;\n');
+  r.git('add', 'src/a.js');
+  const bash = (command) => runHook('pre-bash', { cwd: r.dir, tool_input: { command } });
+  const commands = [
+    'git commit -m "x" # tidy',
+    'git commit $(git diff --cached --name-only) -m x',
+    'git commit `git diff --cached --name-only` -m x',
+    'git commit src/{a,b}.js -m x',
+    'git commit "$F" -m x',
+    'git commit ~/src/a.js -m x',
+  ];
+  for (const command of commands) assert.equal(bash(command)?.hookSpecificOutput?.permissionDecision, 'deny', command);
+  assert.deepEqual(shellWords('-m x # a comment'), ['-m', 'x'], 'a word starting with # starts a comment');
+  assert.deepEqual(shellWords('-m "#1 fix" a#b'), ['-m', '#1 fix', 'a#b'], 'a # inside a word or quotes is literal');
 });

@@ -63,7 +63,7 @@ function preBash(root, config, payload) {
   let cwd = payload.cwd || root;
   const commit = COMMIT.exec(cmd);
   if (commit) {
-    const { all, include, paths, fromFile } = commitArgs(shellWords(cmd, commit.index + commit[0].length));
+    const { all, include, paths, fromFile, expanded } = commitArgs(shellWords(cmd, commit.index + commit[0].length));
     const opts = shellWords(commit[1]);
     // A -C naming $VAR, $(...) or ~user resolves to no real directory, where
     // git diff would fail and check nothing. Fall back to the root.
@@ -77,13 +77,13 @@ function preBash(root, config, payload) {
     if (all) {
       diffSets = [['HEAD']];
       what = 'this commit (-a)';
-    } else if (fromFile || (paths.length && (unknownDir || CD.test(cmd.slice(0, commit.index))))) {
-      // Pathspecs read from a file, or under a directory left unknown by a cd
-      // or a -C we cannot resolve: check every tracked change, a superset of
-      // what the commit takes from disk.
+    } else if (fromFile || expanded || (paths.length && (unknownDir || CD.test(cmd.slice(0, commit.index))))) {
+      // Pathspecs read from a file or rewritten by the shell, or under a
+      // directory left unknown by a cd or a -C we cannot resolve: check every
+      // tracked change, a superset of what the commit takes from disk.
       diffSets = [['HEAD']];
       const where = unknownDir ? 'under a -C directory nitbot cannot resolve' : 'after a cd';
-      const why = fromFile ? 'reads its paths from a file' : `names ${paths.join(' ')} ${where}`;
+      const why = fromFile ? 'reads its paths from a file' : expanded ? 'names paths the shell expands' : `names ${paths.join(' ')} ${where}`;
       what = `the uncommitted changes (this commit ${why}, so all of them were checked)`;
     } else if (paths.length) {
       // `git commit <paths>` commits those files as they are on disk, not the index.
@@ -131,6 +131,7 @@ export function commitArgs(words) {
   let all = false;
   let include = false;
   let fromFile = false; // --pathspec-from-file: paths we cannot see
+  let expanded = false; // a path the shell rewrites ($VAR, $(...), `...`, {a,b}, ~): we cannot see it either
   let endOfOptions = false;
   const paths = [];
   for (let i = 0; i < words.length; i++) {
@@ -140,6 +141,7 @@ export function commitArgs(words) {
       continue;
     }
     if (endOfOptions || !w.startsWith('-') || w === '-') {
+      if (/[$`{]|^~/.test(w)) expanded = true;
       paths.push(w);
     } else if (w === '--') {
       endOfOptions = true;
@@ -163,7 +165,7 @@ export function commitArgs(words) {
       }
     }
   }
-  return { all, include, fromFile, paths };
+  return { all, include, fromFile, expanded, paths };
 }
 
 // The words of one simple command, starting at `start` and stopping at an
@@ -196,8 +198,8 @@ export function shellWords(s, start = 0) {
       const end = endOfSubstitution(s, i + 2);
       add(s.slice(i, end));
       i = end;
-    } else if (/[;&|()\n]/.test(c)) {
-      break;
+    } else if (/[;&|()\n]/.test(c) || (c === '#' && word === null)) {
+      break; // a separator, or a # starting a word: a comment to end of line
     } else if (/\s/.test(c)) {
       if (word !== null) words.push(word);
       word = null;
