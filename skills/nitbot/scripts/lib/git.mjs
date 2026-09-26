@@ -11,7 +11,10 @@ const DIFF = ['-c', 'core.quotepath=false', 'diff', '--no-color', '--no-ext-diff
 const MAX_UNTRACKED_BYTES = 1024 * 1024;
 // nitbot's own folder. Its first run creates .nitbot/.gitignore, and `ignore` or
 // `dismiss` edit files there; none of that is the user's change under review.
-const NOT_OURS = ':(exclude).nitbot';
+// What a branch commits there (config.json, dismissed.json) is, so branch
+// targets diff it separately, committed changes only.
+const OURS = '.nitbot';
+const NOT_OURS = `:(exclude)${OURS}`;
 
 export function run(cmd, args, { cwd, allowFail = false } = {}) {
   try {
@@ -127,6 +130,7 @@ function autoTarget(root, { hasHead, branch }) {
       label: `${branch} vs ${def} (merge-base ${base.slice(0, 7)})${dirty ? ' + uncommitted changes' : ''}`,
       slug: slugify(branch),
       diffArgs: [base, '--', '.', NOT_OURS],
+      oursDiffArgs: [base, 'HEAD', '--', OURS],
       untracked: ['.'],
       intentRange: `${base}..HEAD`,
     });
@@ -194,10 +198,16 @@ function prTarget(root, number) {
 }
 
 function build(root, spec) {
-  let diffText = git(root, [...DIFF, ...spec.diffArgs]);
-  // The reviewer's copy shows whole enclosing functions instead of 3 lines of
-  // context: the cheapest context upgrade there is, and it costs no tool calls.
-  let fnDiffText = git(root, [...DIFF, '--function-context', ...spec.diffArgs], { allowFail: true }) ?? diffText;
+  let diffText = '';
+  let fnDiffText = '';
+  // oursDiffArgs covers paths diffArgs excludes, so the two texts just concatenate.
+  for (const args of [spec.diffArgs, spec.oursDiffArgs].filter(Boolean)) {
+    const text = git(root, [...DIFF, ...args]);
+    diffText += text;
+    // The reviewer's copy shows whole enclosing functions instead of 3 lines of
+    // context: the cheapest context upgrade there is, and it costs no tool calls.
+    fnDiffText += git(root, [...DIFF, '--function-context', ...args], { allowFail: true }) ?? text;
+  }
   if (spec.untracked) {
     for (const p of listUntracked(root, spec.untracked)) {
       const content = readSmallText(path.join(root, p));

@@ -142,3 +142,28 @@ test('a tracked .nitbot/ file edited by nitbot stays out of the branch and workt
   assert.equal(worktree.kind, 'worktree');
   assert.deepEqual(paths(worktree), ['a.js']);
 });
+
+test('committed .nitbot/ changes on a branch are reviewed; nitbot writes on top of them are not', (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('a.js', '1\n');
+  r.commit('one');
+  r.git('checkout', '-q', '-b', 'feat');
+  r.write('.nitbot/config.json', '{ "detector": { "ignoreFiles": ["src/**"] } }\n');
+  r.commit('ignore src');
+
+  const only = resolveTarget(r.dir);
+  assert.equal(only.kind, 'branch');
+  assert.deepEqual(paths(only), ['.nitbot/config.json'], 'a team config change is the branch change under review');
+
+  r.write('b.js', 'b\n');
+  r.commit('feat');
+  r.write('.nitbot/.gitignore', 'state/\n'); // nitbot's first run
+  r.write('.nitbot/config.json', '{ "detector": { "ignoreFiles": ["src/**", "extra/**"] } }\n'); // a later `nitbot ignore`
+  const both = resolveTarget(r.dir);
+  assert.doesNotMatch(both.label, /uncommitted/);
+  assert.deepEqual(paths(both), ['.nitbot/config.json', 'b.js']);
+  assert.match(both.diffText, /src\/\*\*/);
+  assert.doesNotMatch(both.diffText, /extra/, 'the committed version is reviewed, not the uncommitted nitbot edit');
+  assert.match(both.fnDiffText, /src\/\*\*/);
+});
