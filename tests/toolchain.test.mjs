@@ -53,3 +53,21 @@ test('tool discovery reuses probe answers it is given', async (t) => {
   assert.deepEqual(await ids({ go: true, gitleaks: false }), ['go-vet', 'go-test']);
   assert.deepEqual(await ids({ go: false, gitleaks: true }), ['gitleaks']);
 });
+
+test('tool discovery finds go through `go version`, the only version probe go answers', async (t) => {
+  const r = tempRepo();
+  t.after(r.cleanup);
+  r.write('go.mod', 'module x\n');
+  // A stand-in go with the real CLI contract: `go version` exits 0,
+  // `go --version` exits 2 with "flag provided but not defined: -version".
+  const bin = path.join(r.dir, 'fake-bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'go'), '#!/bin/sh\n[ "$1" = version ] && { echo go version go1.99; exit 0; }\necho "flag provided but not defined: -version" >&2\nexit 2\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'go.cmd'), '@echo off\r\nif "%~1"=="version" (echo go version go1.99& exit /b 0)\r\necho flag provided but not defined: -version 1>&2\r\nexit /b 2\r\n');
+  const oldPath = process.env.PATH;
+  process.env.PATH = bin + path.delimiter + oldPath;
+  t.after(() => (process.env.PATH = oldPath));
+
+  const tools = await discoverTools(r.dir, { probes: { gitleaks: false } });
+  assert.deepEqual(tools.map((x) => x.id), ['go-vet', 'go-test']);
+});

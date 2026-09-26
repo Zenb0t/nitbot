@@ -102,15 +102,19 @@ function quoteWin(a) {
   return /^[\w./:=@+-]+$/.test(a) ? a : `"${a.replace(/"/g, '""')}"`;
 }
 
+// Most tools answer --version. go has only the `go version` subcommand:
+// `go --version` exits 2 with "flag provided but not defined: -version".
+const VERSION_ARGS = { go: ['version'] };
+
 async function onPath(bin) {
-  const r = await exec([bin, '--version'], { timeout: 15_000 });
+  const r = await exec([bin, ...(VERSION_ARGS[bin] ?? ['--version'])], { timeout: 15_000 });
   return !r.missing && r.code === 0;
 }
 
 // Each tool: { id, kind, argv(files) -> string[], scope: 'files'|'project',
 // exts?, parse, bin? }. `scope: files` tools get only the changed files that
 // match `exts`; project tools run once over the whole project. A tool with
-// `bin` is kept only if that binary answers --version. `probes` (bin -> bool)
+// `bin` is kept only if that binary answers its version probe. `probes` (bin -> bool)
 // caches those answers: known ones are reused, new ones are written into it.
 export async function discoverTools(root, { probes = {} } = {}) {
   const has = (p) => fs.existsSync(path.join(root, p));
