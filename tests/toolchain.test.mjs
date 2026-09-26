@@ -61,6 +61,14 @@ test('a tool that exits just before its timeout is not reported as timed out, ev
   assert.match(res.stdout, /done/, 'the output is kept');
 });
 
+test('a tool that reads stdin sees it closed, not an open pipe it waits on until the timeout', { timeout: 30_000 }, async () => {
+  const reader = "let n = 0; process.stdin.on('data', (d) => (n += d.length)); process.stdin.on('end', () => console.log('eof ' + n));";
+  const res = await exec([process.execPath, '-e', reader], { timeout: 5000 });
+  assert.equal(res.timedOut, false);
+  assert.equal(res.code, 0);
+  assert.equal(res.stdout.trim(), 'eof 0');
+});
+
 test('exec reports exit codes, output, and missing binaries', async () => {
   const ok = await exec([process.execPath, '-e', 'console.log("hi"); process.exit(3)']);
   assert.equal(ok.code, 3);

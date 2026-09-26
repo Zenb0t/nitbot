@@ -47,10 +47,13 @@ export function exec(argv, { cwd, timeout = 120_000 } = {}) {
       });
     };
 
+    // stdin is the null device: a tool that reads it when it is not a TTY
+    // gets EOF at once instead of waiting on an open pipe until the timeout.
+    const stdio = ['ignore', 'pipe', 'pipe'];
     try {
       child = WIN
-        ? spawn(argv.map(quoteWin).join(' '), { cwd, shell: true, windowsHide: true })
-        : spawn(argv[0], argv.slice(1), { cwd, detached: true }); // own process group, killed as one
+        ? spawn(argv.map(quoteWin).join(' '), { cwd, stdio, shell: true, windowsHide: true })
+        : spawn(argv[0], argv.slice(1), { cwd, stdio, detached: true }); // own process group, killed as one
     } catch (e) {
       return finish(null, e);
     }
