@@ -109,12 +109,27 @@ test('commit gate: `git commit <paths>` is checked against those files on disk',
   assert.match(include, /focused-test/, '--include keeps what is staged');
 });
 
+test('commit gate: `git commit --pathspec-from-file` is checked against the files on disk', (t) => {
+  const r = repo(t);
+  r.write('src/b.js', 'export const b = 1;\n');
+  r.commit('b');
+  r.write('src/b.js', 'export const b = 1;\n  debugger;\n'); // unstaged: the commit takes it from disk
+  r.write('paths.txt', 'src/b.js\n');
+  const bash = (command) => runHook('pre-bash', { cwd: r.dir, tool_input: { command } });
+  const reason = (command) => bash(command)?.hookSpecificOutput.permissionDecisionReason ?? '';
+
+  assert.match(reason('git commit --pathspec-from-file=paths.txt -m x'), /debugger/);
+  assert.match(reason('git commit --pathspec-from-file paths.txt -m x'), /debugger/);
+  assert.equal(bash('git commit -m x'), null, 'a plain commit still takes only the index');
+});
+
 test('shellWords and commitArgs', () => {
   assert.deepEqual(shellWords(String.raw`-m "a b" 'c d' e\ f; rm x`), ['-m', 'a b', 'c d', 'e f']);
-  assert.deepEqual(commitArgs(shellWords('-qm msg -- "my file.js" 2> /dev/null')), { all: false, include: false, paths: ['my file.js'] });
-  assert.deepEqual(commitArgs(['-F', '-', '<<EOF']), { all: false, include: false, paths: [] });
-  assert.deepEqual(commitArgs(['-uno', '-S', 'a.js']), { all: false, include: false, paths: ['a.js'] });
+  assert.deepEqual(commitArgs(shellWords('-qm msg -- "my file.js" 2> /dev/null')), { all: false, include: false, fromFile: false, paths: ['my file.js'] });
+  assert.deepEqual(commitArgs(['-F', '-', '<<EOF']), { all: false, include: false, fromFile: false, paths: [] });
+  assert.deepEqual(commitArgs(['-uno', '-S', 'a.js']), { all: false, include: false, fromFile: false, paths: ['a.js'] });
   assert.equal(commitArgs(['-va']).all, true);
+  assert.deepEqual(commitArgs(['--pathspec-from-file', '-', '-m', 'x']), { all: false, include: false, fromFile: true, paths: [] });
 });
 
 test('commit gate: pathspec commits run with `git -C <dir>` or after `cd <dir> &&` are checked', (t) => {

@@ -63,7 +63,7 @@ function preBash(root, config, payload) {
   let cwd = payload.cwd || root;
   const commit = COMMIT.exec(cmd);
   if (commit) {
-    const { all, include, paths } = commitArgs(shellWords(cmd, commit.index + commit[0].length));
+    const { all, include, paths, fromFile } = commitArgs(shellWords(cmd, commit.index + commit[0].length));
     const opts = shellWords(commit[1]);
     // A -C naming $VAR, $(...) or ~user resolves to no real directory, where
     // git diff would fail and check nothing. Fall back to the root.
@@ -77,13 +77,14 @@ function preBash(root, config, payload) {
     if (all) {
       diffSets = [['HEAD']];
       what = 'this commit (-a)';
-    } else if (paths.length && (unknownDir || CD.test(cmd.slice(0, commit.index)))) {
-      // A cd before the commit, or a -C we cannot resolve, leaves the
-      // pathspecs' directory unknown: check every tracked change, a superset
-      // of what the commit takes.
+    } else if (fromFile || (paths.length && (unknownDir || CD.test(cmd.slice(0, commit.index))))) {
+      // Pathspecs read from a file, or under a directory left unknown by a cd
+      // or a -C we cannot resolve: check every tracked change, a superset of
+      // what the commit takes from disk.
       diffSets = [['HEAD']];
       const where = unknownDir ? 'under a -C directory nitbot cannot resolve' : 'after a cd';
-      what = `the uncommitted changes (this commit names ${paths.join(' ')} ${where}, so all of them were checked)`;
+      const why = fromFile ? 'reads its paths from a file' : `names ${paths.join(' ')} ${where}`;
+      what = `the uncommitted changes (this commit ${why}, so all of them were checked)`;
     } else if (paths.length) {
       // `git commit <paths>` commits those files as they are on disk, not the index.
       diffSets = include ? [['--cached'], ['HEAD', '--', ...paths]] : [['HEAD', '--', ...paths]];
@@ -129,6 +130,7 @@ const REDIRECT = /^\d*[<>]/;
 export function commitArgs(words) {
   let all = false;
   let include = false;
+  let fromFile = false; // --pathspec-from-file: paths we cannot see
   let endOfOptions = false;
   const paths = [];
   for (let i = 0; i < words.length; i++) {
@@ -145,7 +147,10 @@ export function commitArgs(words) {
       const name = w.split('=')[0];
       if (name === '--all') all = true;
       else if (name === '--include') include = true;
-      else if (VALUE_LONG.has(name) && !w.includes('=')) i++;
+      else if (VALUE_LONG.has(name)) {
+        if (name === '--pathspec-from-file') fromFile = true;
+        if (!w.includes('=')) i++;
+      }
     } else {
       for (let j = 1; j < w.length; j++) {
         const f = w[j];
@@ -158,7 +163,7 @@ export function commitArgs(words) {
       }
     }
   }
-  return { all, include, paths };
+  return { all, include, fromFile, paths };
 }
 
 // The words of one simple command, starting at `start` and stopping at an
